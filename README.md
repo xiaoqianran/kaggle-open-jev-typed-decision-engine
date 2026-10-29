@@ -211,6 +211,36 @@ It overshoots in the safe direction. The reliability curve sits **above** the di
 
 Upload [`jevlite_colab.ipynb`](jevlite_colab.ipynb) — the whole repo is embedded in it — set **Runtime → T4 GPU**, and **Run all**.
 
+### Kaggle (dual T4 GPUs via DDP)
+
+In Kaggle Notebook, select **GPU T4 x2** (two GPUs) and enable Internet while installing dependencies and downloading the dataset. Run these cells in order:
+
+```python
+!nvidia-smi -L  # Should report two Tesla T4 GPUs
+!git clone https://github.com/xiaoqianran/kaggle-open-jev-typed-decision-engine.git
+%cd /kaggle/working/kaggle-open-jev-typed-decision-engine
+%pip install -r requirements.txt
+
+# Two processes, one per GPU; global batch remains 4 * 2 * 2 = 16.
+!torchrun --standalone --nproc_per_node=2 02_train.py --epochs 20 --bs 4 --accum 2
+
+# These later steps are single-process; only training needs torchrun.
+!python 03_calibrate.py
+!python 04_eval.py
+```
+
+`--bs` is **per GPU**; global effective batch = number of GPUs × `--bs` × `--accum`.
+The original single-GPU configuration (`--bs 4 --accum 4`) has effective batch 16.
+When using two GPUs, set `--accum 2` to preserve that value. Training uses PyTorch DDP
+with NCCL on CUDA, splits training examples between processes, and synchronizes gradients
+on optimizer updates. Only rank 0 evaluates the **complete** validation set and saves
+`jevlite.pt` / `history.json`. The checkpoint retains the same format as the single-GPU
+version. The bundled Colab notebook still runs the single-GPU entry point by default.
+
+For a quick two-GPU smoke run, add `--limit 40 --epochs 1` to the `torchrun` command.
+`--limit` uses a subset of the dataset, so this run is for compatibility only,
+not benchmark scores. DDP does not guarantee a 2× speedup for this small training set.
+
 ### Local
 
 ```bash
