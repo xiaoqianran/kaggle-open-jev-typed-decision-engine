@@ -151,6 +151,13 @@ def train(args, device, rank, world_size, distributed):
                       f"{elapsed:.0f}s elapsed, ~{elapsed / done - elapsed:.0f}s left",
                       flush=True)
 
+        # Average the training loss across ranks before writing history.
+        epoch_loss = running / max(len(train_loader), 1)
+        if distributed:
+            mean_loss = torch.tensor(epoch_loss, device=device)
+            dist.all_reduce(mean_loss, op=dist.ReduceOp.SUM)
+            epoch_loss = mean_loss.item() / world_size
+
         # Evaluate the complete val set only on rank 0 (using the unwrapped
         # module, so DDP does not require matching forward calls on other ranks).
         stop = False
@@ -158,10 +165,10 @@ def train(args, device, rank, world_size, distributed):
             val_acc = accuracy(base_model, val_loader, device)
             improved = val_acc > best
             print(f"epoch {epoch + 1}/{args.epochs}  "
-                  f"loss {running / max(len(train_loader), 1):.4f}  "
+                  f"loss {epoch_loss:.4f}  "
                   f"val acc {val_acc:.4f}{'  *' if improved else ''}", flush=True)
             history.append({"epoch": epoch + 1,
-                            "loss": running / max(len(train_loader), 1),
+                            "loss": epoch_loss,
                             "val_acc": val_acc})
             with open("history.json", "w", encoding="utf-8") as file:
                 json.dump(history, file, indent=1)
